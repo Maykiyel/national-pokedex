@@ -121,7 +121,7 @@ export default {
         },
         loadMore() {
             this.displayCount = Math.min(
-                this.displayCount + 20,
+                this.displayCount + 12,
                 this.pokemonList.length
             );
         },
