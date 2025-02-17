@@ -1,6 +1,11 @@
 <template>
     <div>
         <v-container fluid v-if="selectedPokemon" class="dark">
+            <!-- Back to Pokémon List -->
+            <v-btn large text color="white--text" @click="goBackToList">
+                <v-icon>mdi-arrow-left</v-icon>
+                <span>Back to list</span>
+            </v-btn>
             <!-- Small screen header (visible only on xs and sm) -->
             <v-row justify="center" class="hidden-sm-and-up">
                 <v-col cols="12">
