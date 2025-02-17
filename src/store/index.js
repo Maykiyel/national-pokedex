@@ -1,7 +1,6 @@
 import Vue from "vue";
 import Vuex from "vuex";
 import axios from "axios";
-
 import { computeSynergyWeaknesses } from "@/helpers/synergyWeaknesses.js";
 
 Vue.use(Vuex);
@@ -48,7 +47,7 @@ async function fetchEvolutionDetails(evolutionNames) {
   }
 }
 
-// Normalize the Pokémon data for consistent consumption.
+// Normalize full Pokémon data.
 function formatPokemonData(data) {
   return {
     id: data.id,
@@ -66,16 +65,31 @@ function formatPokemonData(data) {
 
 export default new Vuex.Store({
   state: {
+    // Minimal list of all Pokémon: each item is { id, name, url }
     pokemonList: [],
-    selectedPokemon: null, // Normalized Pokémon details
-    selectedPokemonSpecies: null, // Contains description, category, etc.
-    selectedPokemonWeaknesses: [], // Dynamically fetched synergy-based weaknesses
-    selectedPokemonEvolutions: [], // Evolution chain (array of objects with id, name, image)
-  },
+    // For paginating the minimal list.
+    currentOffset: 0,
+    listLimit: 1025,
 
+    // Detailed info for the selected Pokémon.
+    selectedPokemon: null,
+    selectedPokemonSpecies: null,
+    selectedPokemonWeaknesses: [],
+    selectedPokemonEvolutions: [],
+
+    // Cache for partial details (image and types) for the list,
+    // keyed by Pokémon id.
+    partialDetailsById: {},
+  },
   mutations: {
     SET_POKEMON_LIST(state, data) {
       state.pokemonList = data;
+    },
+    APPEND_POKEMON_LIST(state, data) {
+      state.pokemonList = state.pokemonList.concat(data);
+    },
+    SET_CURRENT_OFFSET(state, offset) {
+      state.currentOffset = offset;
     },
     SET_SELECTED_POKEMON(state, data) {
       state.selectedPokemon = data;
@@ -89,46 +103,61 @@ export default new Vuex.Store({
     SET_SELECTED_POKEMON_EVOLUTIONS(state, data) {
       state.selectedPokemonEvolutions = data;
     },
+    // Cache partial details for a Pokémon (image and types)
+    SET_PARTIAL_DETAILS(state, { id, data }) {
+      Vue.set(state.partialDetailsById, id, data);
+    },
   },
   actions: {
-    // Fetch a basic list of the first 151 Pokémon.
-    async fetchPokemonList({ commit }) {
+    // Fetch a minimal list of Pokémon (without full details) in chunks.
+    async fetchPokemonList({ commit, state }) {
       try {
+        const { currentOffset, listLimit } = state;
         const response = await axios.get(
-          "https://pokeapi.co/api/v2/pokemon?limit=1025"
+          `https://pokeapi.co/api/v2/pokemon?offset=${currentOffset}&limit=${listLimit}`
         );
-        const pokemonData = await Promise.all(
-          response.data.results.map(async (pokemon) => {
-            try {
-              const details = await axios.get(pokemon.url);
-              return {
-                id: details.data.id,
-                name: details.data.name,
-                types: details.data.types.map((t) => t.type.name),
-                image:
-                  details.data.sprites.other["official-artwork"]
-                    .front_default || details.data.sprites.front_default,
-              };
-            } catch (error) {
-              console.error(
-                `Failed to fetch details for ${pokemon.name}:`,
-                error
-              );
-              return null;
-            }
-          })
-        );
-        const filteredData = pokemonData.filter((p) => p !== null);
-        commit("SET_POKEMON_LIST", filteredData);
+        // Create a minimal list (extract id from the URL)
+        const minimalList = response.data.results.map((p) => {
+          const match = p.url.match(/pokemon\/(\d+)\//);
+          const id = match ? parseInt(match[1], 10) : null;
+          return { id, name: p.name, url: p.url };
+        });
+        if (currentOffset === 0) {
+          commit("SET_POKEMON_LIST", minimalList);
+        } else {
+          commit("APPEND_POKEMON_LIST", minimalList);
+        }
+        commit("SET_CURRENT_OFFSET", currentOffset + listLimit);
       } catch (error) {
         console.error("Error fetching Pokémon list:", error);
       }
     },
 
-    // Fetch detailed data for a specific Pokémon by name or ID.
+    // Action to fetch partial details (image and types) for a Pokémon in the list.
+    async fetchPartialPokemon({ commit, state }, pokemonItem) {
+      if (state.partialDetailsById[pokemonItem.id]) return; // Already fetched.
+      try {
+        const res = await axios.get(pokemonItem.url);
+        const data = {
+          image:
+            res.data.sprites.other["official-artwork"].front_default ||
+            res.data.sprites.front_default,
+          types: res.data.types.map((t) => t.type.name),
+        };
+        commit("SET_PARTIAL_DETAILS", { id: pokemonItem.id, data });
+      } catch (error) {
+        console.error(
+          "Error fetching partial details for",
+          pokemonItem.name,
+          error
+        );
+      }
+    },
+
+    // Fetch full details for a specific Pokémon by name or ID.
     async fetchPokemonDetails({ commit }, pokemonIdentifier) {
       try {
-        // 1. Fetch main Pokémon data
+        // 1. Fetch main Pokémon data.
         const response = await axios.get(
           `https://pokeapi.co/api/v2/pokemon/${pokemonIdentifier}`
         );
@@ -139,7 +168,7 @@ export default new Vuex.Store({
         const speciesResponse = await axios.get(response.data.species.url);
         commit("SET_SELECTED_POKEMON_SPECIES", speciesResponse.data);
 
-        // 3. Evolution chain
+        // 3. Fetch evolution chain.
         const evolutionChainResponse = await axios.get(
           speciesResponse.data.evolution_chain.url
         );
@@ -149,8 +178,7 @@ export default new Vuex.Store({
         const evolutionData = await fetchEvolutionDetails(evolutionNames);
         commit("SET_SELECTED_POKEMON_EVOLUTIONS", evolutionData);
 
-        // 4. Compute synergy-based weaknesses
-        //    Use the data from the API's "types" array
+        // 4. Compute synergy-based weaknesses.
         const synergyWeaknesses = await computeSynergyWeaknesses(
           response.data.types
         );

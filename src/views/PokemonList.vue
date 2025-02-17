@@ -1,6 +1,6 @@
 <template>
     <v-container>
-        <h1 class="white--text">Pokédex</h1>
+        <h1 class="white--text text-center">Pokédex</h1>
 
         <!-- Search and Sort Bar -->
         <v-row align="center" justify="space-between">
@@ -14,10 +14,11 @@
 
         <!-- Pokémon Grid -->
         <v-row v-if="processedPokemonList.length">
-            <v-col v-for="(pokemon, index) in processedPokemonList" :key="pokemon?.name || index" cols="12" sm="6"
-                md="4" lg="3">
-                <PokemonCard :id="pokemon.id" :name="pokemon.name || 'Unknown'" :image="pokemon.image"
-                    :types="pokemon.types" @click="viewDetails(pokemon.name)" />
+            <v-col v-for="pokemon in processedPokemonList" :key="pokemon.id" cols="12" sm="6" md="4" lg="3">
+                <PokemonCard :id="pokemon.id" :name="pokemon.name || 'Unknown'"
+                    :image="partialDetails[pokemon.id] ? partialDetails[pokemon.id].image : getPokemonImage(pokemon.id)"
+                    :types="partialDetails[pokemon.id] ? partialDetails[pokemon.id].types : []"
+                    @click="viewDetails(pokemon.name)" />
             </v-col>
         </v-row>
         <p v-else>Loading Pokémon...</p>
@@ -62,29 +63,22 @@ export default {
         };
     },
     computed: {
-        ...mapState(["pokemonList"]),
-
+        ...mapState(["pokemonList", "partialDetailsById"]),
         // Suggestions for the SearchBar
         pokemonSuggestions() {
             return this.pokemonList.map((p) => this.capitalize(p.name));
         },
-
-        // Consolidated processing: filter, sort, then limit if no search query
+        // Consolidated processing: filter, sort, then limit if no search query.
         processedPokemonList() {
             let list = [...this.pokemonList];
-
-            // Filter by search query if present
             if (this.searchQuery) {
                 const query = this.searchQuery.toLowerCase();
-                list = list.filter((pokemon) => {
-                    return (
+                list = list.filter(
+                    (pokemon) =>
                         pokemon.name.toLowerCase().includes(query) ||
                         String(pokemon.id).includes(query)
-                    );
-                });
+                );
             }
-
-            // Sort based on selectedSort
             switch (this.selectedSort) {
                 case "lowestNumber":
                     list.sort((a, b) => a.id - b.id);
@@ -99,17 +93,29 @@ export default {
                     list.sort((a, b) => b.name.localeCompare(a.name));
                     break;
             }
-
-            // If no search query, limit the number to display
             if (!this.searchQuery) {
                 return list.slice(0, this.displayCount);
-            } else {
-                return list;
             }
+            return list;
+        },
+        // Shortcut to access partial details cache.
+        partialDetails() {
+            return this.partialDetailsById;
+        },
+    },
+    watch: {
+        // Whenever the processed list changes, fetch partial details for each displayed Pokémon.
+        processedPokemonList: {
+            immediate: true,
+            handler(newList) {
+                newList.forEach((pokemon) => {
+                    this.fetchPartialPokemon(pokemon);
+                });
+            },
         },
     },
     methods: {
-        ...mapActions(["fetchPokemonList"]),
+        ...mapActions(["fetchPokemonList", "fetchPartialPokemon"]),
         viewDetails(name) {
             this.$router.push({ name: "PokemonDetails", params: { id: name } });
         },
@@ -121,6 +127,10 @@ export default {
         },
         performSearch(query) {
             this.searchQuery = query;
+        },
+        // Fallback image generator (in case partial details are not loaded yet)
+        getPokemonImage(id) {
+            return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
         },
     },
     created() {
